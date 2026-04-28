@@ -1,6 +1,5 @@
 // @ts-check
 
-import axios from "axios";
 import * as dotenv from "dotenv";
 import githubUsernameRegex from "github-username-regex";
 import { calculateRank } from "../calculateRank.js";
@@ -159,34 +158,62 @@ const statsFetcher = async ({
 };
 
 /**
- * Fetch total commits using the REST API.
+ * Fetch the user's account creation date so we know how far back to walk.
  *
  * @param {object} variables Fetcher variables.
  * @param {string} token GitHub token.
- * @returns {Promise<import('axios').AxiosResponse>} Axios response.
- *
- * @see https://developer.github.com/v3/search/#search-commits
+ * @returns {Promise<import('axios').AxiosResponse>} GraphQL response.
  */
-const fetchTotalCommits = (variables, token) => {
-  return axios({
-    method: "get",
-    url: `https://api.github.com/search/commits?q=author:${variables.login}`,
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/vnd.github.cloak-preview",
-      Authorization: `token ${token}`,
+const fetchUserCreatedAt = (variables, token) => {
+  return request(
+    {
+      query: `
+        query userCreated($login: String!) {
+          user(login: $login) { createdAt }
+        }
+      `,
+      variables,
     },
-  });
+    { Authorization: `bearer ${token}` },
+  );
 };
 
 /**
- * Fetch all the commits for all the repositories of a given username.
+ * Fetch totalCommitContributions for a single year window.
+ *
+ * @param {object} variables Fetcher variables.
+ * @param {string} token GitHub token.
+ * @returns {Promise<import('axios').AxiosResponse>} GraphQL response.
+ */
+const fetchYearCommits = (variables, token) => {
+  return request(
+    {
+      query: `
+        query userYearStats($login: String!, $from: DateTime!, $to: DateTime!) {
+          user(login: $login) {
+            contributionsCollection(from: $from, to: $to) {
+              totalCommitContributions
+            }
+          }
+        }
+      `,
+      variables,
+    },
+    { Authorization: `bearer ${token}` },
+  );
+};
+
+/**
+ * Fetch all-time total commits for a given username.
+ *
+ * Walks contributionsCollection year-by-year from the user's account creation
+ * date to today and sums totalCommitContributions. This honors the viewer's
+ * permissions, so when the PAT belongs to the same user being queried (and the
+ * "Include private contributions on my profile" setting is enabled) private
+ * repo commits are counted too.
  *
  * @param {string} username GitHub username.
  * @returns {Promise<number>} Total commits.
- *
- * @description Done like this because the GitHub API does not provide a way to fetch all the commits. See
- * #92#issuecomment-661026467 and #211 for more information.
  */
 const totalCommitsFetcher = async (username) => {
   if (!githubUsernameRegex.test(username)) {
@@ -194,22 +221,56 @@ const totalCommitsFetcher = async (username) => {
     throw new Error("Invalid username provided.");
   }
 
-  let res;
+  let createdRes;
   try {
-    res = await retryer(fetchTotalCommits, { login: username });
+    createdRes = await retryer(fetchUserCreatedAt, { login: username });
   } catch (err) {
     logger.log(err);
     throw new Error(err);
   }
 
-  const totalCount = res.data.total_count;
-  if (!totalCount || isNaN(totalCount)) {
+  if (createdRes.data.errors || !createdRes.data.data?.user?.createdAt) {
     throw new CustomError(
-      "Could not fetch total commits.",
-      CustomError.GITHUB_REST_API_ERROR,
+      "Could not fetch user creation date.",
+      CustomError.GRAPHQL_ERROR,
     );
   }
-  return totalCount;
+
+  const createdAtIso = createdRes.data.data.user.createdAt;
+  const createdAt = new Date(createdAtIso);
+  const startYear = createdAt.getUTCFullYear();
+  const currentYear = new Date().getUTCFullYear();
+
+  let total = 0;
+  for (let year = startYear; year <= currentYear; year++) {
+    const from =
+      year === startYear
+        ? createdAtIso
+        : new Date(Date.UTC(year, 0, 1, 0, 0, 0)).toISOString();
+    const to =
+      year === currentYear
+        ? new Date().toISOString()
+        : new Date(Date.UTC(year, 11, 31, 23, 59, 59)).toISOString();
+
+    const yearRes = await retryer(fetchYearCommits, {
+      login: username,
+      from,
+      to,
+    });
+
+    if (yearRes.data.errors) {
+      logger.error(yearRes.data.errors);
+      throw new CustomError(
+        "Could not fetch yearly commits.",
+        CustomError.GRAPHQL_ERROR,
+      );
+    }
+
+    total +=
+      yearRes.data.data.user.contributionsCollection.totalCommitContributions;
+  }
+
+  return total;
 };
 
 /**
