@@ -2,6 +2,7 @@ import fs from "fs";
 import { themes } from "../themes/index.js";
 
 const TARGET_FILE = "./themes/README.md";
+const HOST = "https://github-readme-stats-nu-plum-86.vercel.app";
 const REPO_CARD_LINKS_FLAG = "<!-- REPO_CARD_LINKS -->";
 const STAT_CARD_LINKS_FLAG = "<!-- STATS_CARD_LINKS -->";
 
@@ -17,7 +18,7 @@ With inbuilt themes, you can customize the look of the card without doing any ma
 Use \`?theme=THEME_NAME\` parameter like so:
 
 \`\`\`md
-![Anurag's GitHub stats](https://github-readme-stats.vercel.app/api?username=Jstoqui&theme=dark&show_icons=true)
+![Jstoqui's GitHub stats](${HOST}/api?username=Jstoqui&include_all_commits=true&theme=dark&show_icons=true)
 \`\`\`
 
 ## Stats
@@ -42,10 +43,10 @@ ${REPO_CARD_LINKS_FLAG}
 `;
 
 const createRepoMdLink = (theme) => {
-  return `\n[${theme}_repo]: https://github-readme-stats.vercel.app/api/pin/?username=Jstoqui&repo=github-readme-stats&cache_seconds=86400&theme=${theme}`;
+  return `\n[${theme}_repo]: ${HOST}/api/pin/?username=Jstoqui&repo=github-readme-stats&cache_seconds=86400&theme=${theme}`;
 };
 const createStatMdLink = (theme) => {
-  return `\n[${theme}]: https://github-readme-stats.vercel.app/api?username=Jstoqui&show_icons=true&hide=contribs,prs&cache_seconds=86400&theme=${theme}`;
+  return `\n[${theme}]: ${HOST}/api?username=Jstoqui&show_icons=true&include_all_commits=true&hide=contribs,prs&cache_seconds=86400&theme=${theme}`;
 };
 
 const generateLinks = (fn) => {
